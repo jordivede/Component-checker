@@ -1,17 +1,464 @@
-<h2>Shape Creator</h2>
-<p>Count: <input id="count" type="number" value="5"></p>
-<button id="create">Create</button>
-<button id="cancel">Cancel</button>
-<script>
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      padding: 0;
+      margin: 0;
+      background: #FFFFFF;
+      color: #000000;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    
+    .container {
+      padding: 16px;
+    }
+    
+    h2 {
+      margin: 0 0 12px 0;
+      font-size: 15px;
+      font-weight: 600;
+      color: #000000;
+      letter-spacing: -0.2px;
+    }
+    
+    .info {
+      background: #F7F7F7;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: #000000;
+      line-height: 1.5;
+      border: 1px solid #E5E5E5;
+    }
+    
+    .button-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    
+    button {
+      width: 100%;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      outline: none;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    button:focus {
+      box-shadow: 0 0 0 2px rgba(24, 160, 251, 0.3);
+    }
+    
+    #scan {
+      background: #18A0FB;
+      color: #FFFFFF;
+    }
+    
+    #scan:hover:not(:disabled) {
+      background: #1592E6;
+    }
+    
+    #scan:active:not(:disabled) {
+      background: #0E7FD1;
+    }
+    
+    #scan:disabled {
+      background: #E5E5E5;
+      color: #999999;
+      cursor: not-allowed;
+    }
+    
+    #cancel {
+      background: #F0F0F0;
+      color: #000000;
+      border: 1px solid #E5E5E5;
+    }
+    
+    #cancel:hover {
+      background: #E5E5E5;
+    }
+    
+    #cancel:active {
+      background: #D9D9D9;
+    }
+    
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 12px;
+      font-size: 13px;
+      color: #787878;
+      background: #F7F7F7;
+      border-radius: 6px;
+      border: 1px solid #E5E5E5;
+      margin-bottom: 16px;
+    }
+    
+    .results {
+      margin-top: 0;
+      padding: 12px;
+      border-radius: 6px;
+      display: none;
+      border: 1px solid;
+    }
+    
+    .results.success {
+      background: #E8F5E9;
+      border-color: #4CAF50;
+      display: block;
+    }
+    
+    .results.error {
+      background: #FFEBEE;
+      border-color: #F44336;
+      display: block;
+    }
+    
+    .results.warning {
+      background: #FFF3E0;
+      border-color: #FF9800;
+      display: block;
+    }
+    
+    .results h3 {
+      margin: 0 0 8px 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #000000;
+    }
+    
+    .results p {
+      margin: 0 0 8px 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #000000;
+    }
+    
+    .results p:last-child {
+      margin-bottom: 0;
+    }
+    
+    .issue-list {
+      margin-top: 12px;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    
+    .issue-list::-webkit-scrollbar {
+      width: 8px;
+    }
+    
+    .issue-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    
+    .issue-list::-webkit-scrollbar-thumb {
+      background: #D9D9D9;
+      border-radius: 4px;
+    }
+    
+    .issue-list::-webkit-scrollbar-thumb:hover {
+      background: #CCCCCC;
+    }
+    
+    .issue-item {
+      background: #FFFFFF;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      border-radius: 6px;
+      font-size: 13px;
+      border-left: 3px solid #F44336;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border-right: 1px solid #E5E5E5;
+      border-top: 1px solid #E5E5E5;
+      border-bottom: 1px solid #E5E5E5;
+    }
+    
+    .issue-item.nested {
+      margin-left: 24px;
+      border-left-color: #FF9800;
+    }
+    
+    .issue-item.nested-level-2 {
+      margin-left: 48px;
+      border-left-color: #FFC107;
+    }
+    
+    .issue-item.nested-level-3 {
+      margin-left: 72px;
+      border-left-color: #FFEB3B;
+    }
+    
+    .issue-item .hierarchy-indicator {
+      font-size: 11px;
+      color: #999999;
+      margin-bottom: 4px;
+      font-style: italic;
+    }
+    
+    .issue-item .hierarchy-path {
+      font-size: 11px;
+      color: #787878;
+      margin-bottom: 4px;
+    }
+    
+    .issue-item:hover {
+      background: #F7F7F7;
+      border-color: #D9D9D9;
+    }
+    
+    .issue-item:active {
+      background: #F0F0F0;
+    }
+    
+    .issue-item strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #000000;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    
+    .issue-item .description {
+      color: #787878;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    
+    .issue-item .click-hint {
+      font-size: 11px;
+      color: #999999;
+      margin-top: 4px;
+      font-style: normal;
+    }
+    
+    .divider {
+      height: 1px;
+      background: #E5E5E5;
+      margin: 16px 0;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Component Checker</h2>
+    
+    <div class="info">
+      Selecciona un Frame, Component o Component Set en Figma y haz clic en "Escanear" para verificar que todos los componentes estén vinculados correctamente a las librerías de referencia.
+    </div>
+    
+    <div class="button-group">
+      <button id="scan">Escanear Frame</button>
+      <button id="cancel">Cancelar</button>
+    </div>
+    
+    <div class="loading" id="loading">Escaneando...</div>
+    
+    <div class="results" id="results">
+      <h3 id="results-title"></h3>
+      <p id="results-message"></p>
+      <div class="issue-list" id="issue-list"></div>
+    </div>
+  </div>
+  
+  <script>
+    const scanButton = document.getElementById('scan');
+    const cancelButton = document.getElementById('cancel');
+    const resultsDiv = document.getElementById('results');
+    const resultsTitle = document.getElementById('results-title');
+    const resultsMessage = document.getElementById('results-message');
+    const issueList = document.getElementById('issue-list');
+    const loadingDiv = document.getElementById('loading');
 
-document.getElementById('create').onclick = () => {
-  const textbox = document.getElementById('count');
-  const count = parseInt(textbox.value, 10);
-  parent.postMessage({ pluginMessage: { type: 'create-shapes', count } }, '*')
-}
+    scanButton.onclick = () => {
+      scanButton.disabled = true;
+      loadingDiv.style.display = 'block';
+      resultsDiv.style.display = 'none';
+      issueList.innerHTML = '';
+      
+      parent.postMessage({ pluginMessage: { type: 'scan-frame' } }, '*');
+    };
 
-document.getElementById('cancel').onclick = () => {
-  parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
-}
+    cancelButton.onclick = () => {
+      parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+    };
 
-</script>
+    // Function to calculate and resize UI
+    function resizeUI() {
+      // Wait a bit for DOM to update
+      setTimeout(() => {
+        const body = document.body;
+        const height = Math.max(300, body.scrollHeight + 20); // Add some padding
+        parent.postMessage({ pluginMessage: { type: 'resize-ui', height: height } }, '*');
+      }, 100);
+    }
+    
+    // Listen for messages from the plugin code
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+      
+      if (msg.type === 'selection-error') {
+        alert(msg.error);
+      }
+      
+      if (msg.type === 'scan-result') {
+        scanButton.disabled = false;
+        loadingDiv.style.display = 'none';
+        resultsDiv.style.display = 'block';
+        
+        if (msg.error) {
+          // Show error
+          resultsDiv.className = 'results error';
+          resultsTitle.textContent = 'Error';
+          resultsMessage.textContent = msg.error;
+          issueList.innerHTML = '';
+          resizeUI();
+        } else if (msg.result) {
+          const result = msg.result;
+          
+          if (result.issues.length === 0) {
+            // All components are properly linked
+            resultsDiv.className = 'results success';
+            resultsTitle.textContent = '✓ Todo está correcto';
+            
+            if (result.totalComponents === 0) {
+              resultsMessage.textContent = `No se encontraron componentes en "${result.frameName}".`;
+            } else {
+              resultsMessage.textContent = `✓ Escaneo completado: Se analizaron ${result.totalComponents} componente(s) en "${result.frameName}". Todos están correctamente vinculados a las librerías de referencia.`;
+            }
+            issueList.innerHTML = '';
+            resizeUI();
+          } else {
+            // Some components have issues
+            resultsDiv.className = 'results warning';
+            resultsTitle.textContent = '⚠ Componentes que requieren restauración';
+            resultsMessage.textContent = `Se encontraron ${result.totalIssues || result.issues.length} componente(s) que deben ser restaurados en "${result.frameName}":`;
+            
+            issueList.innerHTML = '';
+            
+            // Sort issues by hierarchical grouping - children appear right after their parent
+            const sortedIssues = [];
+            const processed = new Set();
+            
+            // Build a map: parentId -> children array
+            const childrenMap = new Map();
+            const rootIssues = [];
+            
+            result.issues.forEach(issue => {
+              if (issue.parentId) {
+                if (!childrenMap.has(issue.parentId)) {
+                  childrenMap.set(issue.parentId, []);
+                }
+                childrenMap.get(issue.parentId).push(issue);
+              } else {
+                rootIssues.push(issue);
+              }
+            });
+            
+            // Sort root issues by name
+            rootIssues.sort((a, b) => a.name.localeCompare(b.name));
+            
+            // Recursive function to add issues in hierarchical order
+            function addIssuesHierarchically(parentId) {
+              const children = childrenMap.get(parentId) || [];
+              
+              // Sort children by name
+              children.sort((a, b) => a.name.localeCompare(b.name));
+              
+              children.forEach(issue => {
+                if (processed.has(issue.id)) return;
+                
+                sortedIssues.push(issue);
+                processed.add(issue.id);
+                
+                // Recursively add children of this issue
+                addIssuesHierarchically(issue.id);
+              });
+            }
+            
+            // Start with root issues (no parent)
+            rootIssues.forEach(issue => {
+              if (processed.has(issue.id)) return;
+              
+              sortedIssues.push(issue);
+              processed.add(issue.id);
+              
+              // Add all descendants
+              addIssuesHierarchically(issue.id);
+            });
+            
+            // Add any remaining issues (in case of orphaned components or if parentId wasn't found)
+            result.issues.forEach(issue => {
+              if (!processed.has(issue.id)) {
+                sortedIssues.push(issue);
+                processed.add(issue.id);
+              }
+            });
+            
+            sortedIssues.forEach((issue) => {
+              const issueItem = document.createElement('div');
+              
+              // Add class based on nesting level
+              let itemClass = 'issue-item';
+              if (issue.level > 0) {
+                if (issue.level === 1) {
+                  itemClass += ' nested';
+                } else if (issue.level === 2) {
+                  itemClass += ' nested-level-2';
+                } else if (issue.level >= 3) {
+                  itemClass += ' nested-level-3';
+                }
+              }
+              
+              issueItem.className = itemClass;
+              
+              // Build hierarchy path display
+              let hierarchyHTML = '';
+              if (issue.parentPath && issue.parentPath.length > 0) {
+                const path = issue.parentPath.join(' → ');
+                hierarchyHTML = `<div class="hierarchy-path">Dentro de: ${path}</div>`;
+              }
+              
+              issueItem.innerHTML = `
+                ${hierarchyHTML}
+                <strong>${issue.name}</strong>
+                <div class="description">No está vinculado a una librería de referencia</div>
+                <div class="click-hint">Haz clic para seleccionar</div>
+              `;
+              
+              issueItem.onclick = () => {
+                parent.postMessage({ pluginMessage: { type: 'select-component', componentId: issue.id } }, '*');
+              };
+              issueList.appendChild(issueItem);
+            });
+            resizeUI();
+          }
+        }
+      }
+    };
+    
+    // Initial resize
+    resizeUI();
+  </script>
+</body>
+</html>

@@ -3,161 +3,362 @@
 // You can access browser APIs in the <script> tag inside "ui.html" which has a
 // full browser environment (See https://www.figma.com/plugin-docs/how-plugins-run).
 
+// Function to recursively find all component instances in a node with hierarchy
+function findAllComponentInstances(node, level = 0, parentPath = []) {
+  const instances = [];
+  const currentPath = [...parentPath];
+  
+  if (node.type === 'INSTANCE') {
+    instances.push({
+      node: node,
+      level: level,
+      parentPath: currentPath,
+      parentName: currentPath.length > 0 ? currentPath[currentPath.length - 1] : null
+    });
+    // Add this instance to the path for its children
+    currentPath.push(node.name);
+  }
+  
+  if ('children' in node) {
+    for (const child of node.children) {
+      instances.push(...findAllComponentInstances(child, level + (node.type === 'INSTANCE' ? 1 : 0), currentPath));
+    }
+  }
+  
+  return instances;
+}
+
+// Function to check if a component is properly linked to a library
+async function isComponentLinked(instance) {
+  try {
+    // Use getMainComponentAsync for dynamic-page document access
+    const mainComponent = await instance.getMainComponentAsync();
+    
+    if (!mainComponent) {
+      return false;
+    }
+    
+    // Check if the main component is from a remote library
+    // Remote components have the 'remote' property set to true
+    // Only components from external libraries are considered properly linked
+    return mainComponent.remote === true;
+  } catch (error) {
+    // If we can't check, assume it's not properly linked
+    return false;
+  }
+}
+
+// Function to scan a frame for component linking issues
+async function scanFrameForComponents(frame) {
+  const issues = [];
+  const instances = findAllComponentInstances(frame);
+  
+  // Create a map to track parent IDs
+  const parentIdMap = new Map();
+  
+  for (const instanceData of instances) {
+    const instance = instanceData.node;
+    const isLinked = await isComponentLinked(instance);
+    if (!isLinked) {
+      // Find parent ID if exists
+      let parentId = null;
+      if (instanceData.parentPath && instanceData.parentPath.length > 0) {
+        // Try to find the parent instance ID
+        const parentInstance = instances.find(inst => 
+          inst.node.name === instanceData.parentPath[instanceData.parentPath.length - 1] &&
+          inst.level === instanceData.level - 1
+        );
+        if (parentInstance) {
+          parentId = parentInstance.node.id;
+        }
+      }
+      
+      issues.push({
+        name: instance.name,
+        id: instance.id,
+        type: 'NOT_LINKED',
+        level: instanceData.level,
+        parentPath: instanceData.parentPath,
+        parentName: instanceData.parentName,
+        parentId: parentId
+      });
+      
+      // Store this component's ID for children lookup
+      parentIdMap.set(instance.id, instance.name);
+    }
+  }
+  
+  return {
+    totalComponents: instances.length,
+    totalIssues: issues.length,
+    issues: issues,
+    frameName: frame.name
+  };
+}
+
 // Runs this code if the plugin is run in Figma
 if (figma.editorType === 'figma') {
-  // This plugin will open a window to prompt the user to enter a number, and
-  // it will then create that many rectangles on the screen.
+  // Show the HTML page
+  figma.showUI(__html__, { width: 640, height: 300 });
 
-  // This shows the HTML page in "ui.html".
-  figma.showUI(__html__);
-
-  // Calls to "parent.postMessage" from within the HTML page will trigger this
-  // callback. The callback will be passed the "pluginMessage" property of the
-  // posted message.
-  figma.ui.onmessage = (msg) => {
-    // One way of distinguishing between different types of messages sent from
-    // your HTML page is to use an object with a "type" property like this.
-    if (msg.type === 'create-shapes') {
-      // This plugin creates rectangles on the screen.
-      const numberOfRectangles = msg.count;
-
-      const nodes = [];
-      for (let i = 0; i < numberOfRectangles; i++) {
-        const rect = figma.createRectangle();
-        rect.x = i * 150;
-        rect.fills = [{ type: 'SOLID', color: { r: 1, g: 0.5, b: 0 } }];
-        figma.currentPage.appendChild(rect);
-        nodes.push(rect);
+  // Handle messages from the UI
+  figma.ui.onmessage = async (msg) => {
+    if (msg.type === 'scan-frame') {
+      // Check if a frame is selected
+      const selection = figma.currentPage.selection;
+      
+      if (selection.length === 0) {
+        figma.ui.postMessage({
+          type: 'scan-result',
+          error: 'Por favor, selecciona un frame para escanear.'
+        });
+        return;
       }
-      figma.currentPage.selection = nodes;
-      figma.viewport.scrollAndZoomIntoView(nodes);
+      
+      const selectedNode = selection[0];
+      
+      // Check if the selected node is a frame
+      if (selectedNode.type !== 'FRAME' && selectedNode.type !== 'COMPONENT' && selectedNode.type !== 'COMPONENT_SET') {
+        figma.ui.postMessage({
+          type: 'scan-result',
+          error: 'Por favor, selecciona un Frame, Component o Component Set.'
+        });
+        return;
+      }
+      
+      // Scan the frame for component issues
+      const scanResult = await scanFrameForComponents(selectedNode);
+      
+      // Send results back to UI
+      figma.ui.postMessage({
+        type: 'scan-result',
+        result: scanResult
+      });
     }
-
-    // Make sure to close the plugin when you're done. Otherwise the plugin will
-    // keep running, which shows the cancel button at the bottom of the screen.
-    figma.closePlugin();
+    
+    if (msg.type === 'cancel') {
+      figma.closePlugin();
+    }
+    
+    if (msg.type === 'resize-ui') {
+      // Resize the UI based on content height
+      figma.ui.resize(640, msg.height);
+    }
+    
+    if (msg.type === 'select-component') {
+      // Select the component by ID using async method for dynamic-page access
+      try {
+        const node = await figma.getNodeByIdAsync(msg.componentId);
+        if (node) {
+          figma.currentPage.selection = [node];
+          figma.viewport.scrollAndZoomIntoView([node]);
+        } else {
+          figma.ui.postMessage({
+            type: 'selection-error',
+            error: 'No se pudo encontrar el componente.'
+          });
+        }
+      } catch (error) {
+        figma.ui.postMessage({
+          type: 'selection-error',
+          error: 'Error al seleccionar el componente: ' + error.message
+        });
+      }
+    }
   };
 }
 
 // Runs this code if the plugin is run in FigJam
 if (figma.editorType === 'figjam') {
-  // This plugin will open a window to prompt the user to enter a number, and
-  // it will then create that many shapes and connectors on the screen.
+  figma.showUI(__html__, { width: 640, height: 300 });
 
-  // This shows the HTML page in "ui.html".
-  figma.showUI(__html__);
-
-  // Calls to "parent.postMessage" from within the HTML page will trigger this
-  // callback. The callback will be passed the "pluginMessage" property of the
-  // posted message.
-  figma.ui.onmessage = (msg) => {
-    // One way of distinguishing between different types of messages sent from
-    // your HTML page is to use an object with a "type" property like this.
-    if (msg.type === 'create-shapes') {
-      // This plugin creates shapes and connectors on the screen.
-      const numberOfShapes = msg.count;
-
-      const nodes = [];
-      for (let i = 0; i < numberOfShapes; i++) {
-        const shape = figma.createShapeWithText();
-        // You can set shapeType to one of: 'SQUARE' | 'ELLIPSE' | 'ROUNDED_RECTANGLE' | 'DIAMOND' | 'TRIANGLE_UP' | 'TRIANGLE_DOWN' | 'PARALLELOGRAM_RIGHT' | 'PARALLELOGRAM_LEFT'
-        shape.shapeType = 'ROUNDED_RECTANGLE';
-        shape.x = i * (shape.width + 200);
-        shape.fills = [{ type: 'SOLID', color: { r: 1, g: 0.5, b: 0 } }];
-        figma.currentPage.appendChild(shape);
-        nodes.push(shape);
+  figma.ui.onmessage = async (msg) => {
+    if (msg.type === 'scan-frame') {
+      const selection = figma.currentPage.selection;
+      
+      if (selection.length === 0) {
+        figma.ui.postMessage({
+          type: 'scan-result',
+          error: 'Por favor, selecciona un frame para escanear.'
+        });
+        return;
       }
-
-      for (let i = 0; i < numberOfShapes - 1; i++) {
-        const connector = figma.createConnector();
-        connector.strokeWeight = 8;
-
-        connector.connectorStart = {
-          endpointNodeId: nodes[i].id,
-          magnet: 'AUTO',
-        };
-
-        connector.connectorEnd = {
-          endpointNodeId: nodes[i + 1].id,
-          magnet: 'AUTO',
-        };
+      
+      const selectedNode = selection[0];
+      
+      if (selectedNode.type !== 'FRAME' && selectedNode.type !== 'COMPONENT' && selectedNode.type !== 'COMPONENT_SET') {
+        figma.ui.postMessage({
+          type: 'scan-result',
+          error: 'Por favor, selecciona un Frame, Component o Component Set.'
+        });
+        return;
       }
-
-      figma.currentPage.selection = nodes;
-      figma.viewport.scrollAndZoomIntoView(nodes);
+      
+      const scanResult = await scanFrameForComponents(selectedNode);
+      
+      figma.ui.postMessage({
+        type: 'scan-result',
+        result: scanResult
+      });
     }
-
-    // Make sure to close the plugin when you're done. Otherwise the plugin will
-    // keep running, which shows the cancel button at the bottom of the screen.
-    figma.closePlugin();
+    
+    if (msg.type === 'cancel') {
+      figma.closePlugin();
+    }
+    
+    if (msg.type === 'resize-ui') {
+      // Resize the UI based on content height
+      figma.ui.resize(640, msg.height);
+    }
+    
+    if (msg.type === 'select-component') {
+      try {
+        const node = figma.getNodeById(msg.componentId);
+        if (node) {
+          figma.currentPage.selection = [node];
+          figma.viewport.scrollAndZoomIntoView([node]);
+        } else {
+          figma.ui.postMessage({
+            type: 'selection-error',
+            error: 'No se pudo encontrar el componente.'
+          });
+        }
+      } catch (error) {
+        figma.ui.postMessage({
+          type: 'selection-error',
+          error: 'Error al seleccionar el componente: ' + error.message
+        });
+      }
+    }
   };
 }
 
 // Runs this code if the plugin is run in Slides
 if (figma.editorType === 'slides') {
-  // This plugin will open a window to prompt the user to enter a number, and
-  // it will then create that many slides on the screen.
+  figma.showUI(__html__, { width: 640, height: 300 });
 
-  // This shows the HTML page in "ui.html".
-  figma.showUI(__html__);
-
-  // Calls to "parent.postMessage" from within the HTML page will trigger this
-  // callback. The callback will be passed the "pluginMessage" property of the
-  // posted message.
-  figma.ui.onmessage = (msg) => {
-    // One way of distinguishing between different types of messages sent from
-    // your HTML page is to use an object with a "type" property like this.
-    if (msg.type === 'create-shapes') {
-      // This plugin creates slides and puts the user in grid view.
-      const numberOfSlides = msg.count;
-
-      const nodes = [];
-      for (let i = 0; i < numberOfSlides; i++) {
-        const slide = figma.createSlide();
-        nodes.push(slide);
+  figma.ui.onmessage = async (msg) => {
+    if (msg.type === 'scan-frame') {
+      const selection = figma.currentPage.selection;
+      
+      if (selection.length === 0) {
+        figma.ui.postMessage({
+          type: 'scan-result',
+          error: 'Por favor, selecciona un frame para escanear.'
+        });
+        return;
       }
-
-      figma.viewport.slidesView = 'grid';
-      figma.currentPage.selection = nodes;
+      
+      const selectedNode = selection[0];
+      
+      if (selectedNode.type !== 'FRAME' && selectedNode.type !== 'COMPONENT' && selectedNode.type !== 'COMPONENT_SET') {
+        figma.ui.postMessage({
+          type: 'scan-result',
+          error: 'Por favor, selecciona un Frame, Component o Component Set.'
+        });
+        return;
+      }
+      
+      const scanResult = await scanFrameForComponents(selectedNode);
+      
+      figma.ui.postMessage({
+        type: 'scan-result',
+        result: scanResult
+      });
     }
-
-    // Make sure to close the plugin when you're done. Otherwise the plugin will
-    // keep running, which shows the cancel button at the bottom of the screen.
-    figma.closePlugin();
+    
+    if (msg.type === 'cancel') {
+      figma.closePlugin();
+    }
+    
+    if (msg.type === 'resize-ui') {
+      // Resize the UI based on content height
+      figma.ui.resize(640, msg.height);
+    }
+    
+    if (msg.type === 'select-component') {
+      try {
+        const node = figma.getNodeById(msg.componentId);
+        if (node) {
+          figma.currentPage.selection = [node];
+          figma.viewport.scrollAndZoomIntoView([node]);
+        } else {
+          figma.ui.postMessage({
+            type: 'selection-error',
+            error: 'No se pudo encontrar el componente.'
+          });
+        }
+      } catch (error) {
+        figma.ui.postMessage({
+          type: 'selection-error',
+          error: 'Error al seleccionar el componente: ' + error.message
+        });
+      }
+    }
   };
 }
 
 // Runs this code if the plugin is run in Buzz
 if (figma.editorType === 'buzz') {
-  // This plugin will open a window to prompt the user to enter a number, and
-  // it will then create that many frames on the screen.
+  figma.showUI(__html__, { width: 640, height: 300 });
 
-  // This shows the HTML page in "ui.html".
-  figma.showUI(__html__);
-
-  // Calls to "parent.postMessage" from within the HTML page will trigger this
-  // callback. The callback will be passed the "pluginMessage" property of the
-  // posted message.
-  figma.ui.onmessage = (msg) => {
-    // One way of distinguishing between different types of messages sent from
-    // your HTML page is to use an object with a "type" property like this.
-    if (msg.type === 'create-shapes') {
-      // This plugin creates frames and puts the user in grid view.
-      const numberOfFrames = msg.count;
-
-      const nodes = [];
-      for (let i = 0; i < numberOfFrames; i++) {
-        const frame = figma.buzz.createFrame();
-        nodes.push(frame);
+  figma.ui.onmessage = async (msg) => {
+    if (msg.type === 'scan-frame') {
+      const selection = figma.currentPage.selection;
+      
+      if (selection.length === 0) {
+        figma.ui.postMessage({
+          type: 'scan-result',
+          error: 'Por favor, selecciona un frame para escanear.'
+        });
+        return;
       }
-
-      figma.viewport.canvasView = 'grid';
-      figma.currentPage.selection = nodes;
-      figma.viewport.scrollAndZoomIntoView(nodes);
+      
+      const selectedNode = selection[0];
+      
+      if (selectedNode.type !== 'FRAME' && selectedNode.type !== 'COMPONENT' && selectedNode.type !== 'COMPONENT_SET') {
+        figma.ui.postMessage({
+          type: 'scan-result',
+          error: 'Por favor, selecciona un Frame, Component o Component Set.'
+        });
+        return;
+      }
+      
+      const scanResult = await scanFrameForComponents(selectedNode);
+      
+      figma.ui.postMessage({
+        type: 'scan-result',
+        result: scanResult
+      });
     }
-
-    // Make sure to close the plugin when you're done. Otherwise the plugin will
-    // keep running, which shows the cancel button at the bottom of the screen.
-    figma.closePlugin();
+    
+    if (msg.type === 'cancel') {
+      figma.closePlugin();
+    }
+    
+    if (msg.type === 'resize-ui') {
+      // Resize the UI based on content height
+      figma.ui.resize(640, msg.height);
+    }
+    
+    if (msg.type === 'select-component') {
+      try {
+        const node = figma.getNodeById(msg.componentId);
+        if (node) {
+          figma.currentPage.selection = [node];
+          figma.viewport.scrollAndZoomIntoView([node]);
+        } else {
+          figma.ui.postMessage({
+            type: 'selection-error',
+            error: 'No se pudo encontrar el componente.'
+          });
+        }
+      } catch (error) {
+        figma.ui.postMessage({
+          type: 'selection-error',
+          error: 'Error al seleccionar el componente: ' + error.message
+        });
+      }
+    }
   };
 }
